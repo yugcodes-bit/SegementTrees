@@ -18,6 +18,7 @@ const initializeSearch = async () => {
 };
 initializeSearch();
 
+// 1. Fast Search
 exports.searchEvents = (req, res) => {
     const { query } = req.query;
     if (!query) return res.json([]);
@@ -25,6 +26,7 @@ exports.searchEvents = (req, res) => {
     res.json(results);
 };
 
+// 2. Book Seats
 exports.bookSeats = async (req, res) => {
     const { eventId, userName, numSeats, tier } = req.body; 
     const booking = vipRow.bookContiguous(numSeats);
@@ -48,24 +50,22 @@ exports.bookSeats = async (req, res) => {
     }
 };
 
+// 3. Get Next Waitlist
 exports.getNextWaitlist = (req, res) => {
     const nextUser = waitlist.peek();
     if (!nextUser) return res.json({ message: "Waitlist is empty." });
     res.json({ next_in_line: nextUser });
 };
 
-// Admin: Cancel Booking & Auto-Resolve Waitlist
+// 4. Admin: Cancel Booking & Auto-Resolve
 exports.cancelBooking = async (req, res) => {
     try {
         const { startIndex, endIndex } = req.body;
-
-        // 1. Unbook seats in Segment Tree
         vipRow.update(1, 0, vipRow.size - 1, parseInt(startIndex), parseInt(endIndex), 1);
         
         let resolvedUser = null;
         let resolvedSeats = null;
 
-        // 2. Resolve Min-Heap Waitlist
         if (!waitlist.isEmpty()) {
             const nextInLine = waitlist.peek();
             const numSeatsNeeded = 1; 
@@ -90,5 +90,16 @@ exports.cancelBooking = async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Server error during cancellation' });
+    }
+};
+
+// 5. Admin: Hard Reset Engine
+exports.resetEngine = (req, res) => {
+    try {
+        vipRow.build(1, 0, vipRow.size - 1);
+        waitlist.heap = [];
+        res.json({ status: 'success', message: 'DSA Engine Memory Wiped Clean.' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to reset engine.' });
     }
 };
