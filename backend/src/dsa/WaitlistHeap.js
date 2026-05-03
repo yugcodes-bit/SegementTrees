@@ -1,12 +1,13 @@
 /**
  * Smart Seat: Priority Waitlist (Min-Heap)
- * Manages sold-out event waitlists based on VIP Tier and Timestamp.
  */
 class WaitlistNode {
-    constructor(user, tier) {
-        this.user = user;       // e.g., "John Doe" or a User ID
-        this.tier = tier;       // 1 = VIP, 2 = General
-        this.timestamp = Date.now(); // Exact millisecond they joined
+    // We added 'numSeats' here so the heap remembers exactly what they want
+    constructor(user, tier, numSeats) {
+        this.user = user;       
+        this.tier = tier;       
+        this.numSeats = numSeats; 
+        this.timestamp = Date.now(); 
     }
 }
 
@@ -36,10 +37,7 @@ class WaitlistHeap {
     isHigherPriority(indexA, indexB) {
         const nodeA = this.heap[indexA];
         const nodeB = this.heap[indexB];
-
-        if (nodeA.tier !== nodeB.tier) {
-            return nodeA.tier < nodeB.tier;
-        }
+        if (nodeA.tier !== nodeB.tier) return nodeA.tier < nodeB.tier;
         return nodeA.timestamp < nodeB.timestamp;
     }
 
@@ -48,8 +46,9 @@ class WaitlistHeap {
         return this.heap[0];
     }
 
-    enqueue(user, tier) {
-        const newNode = new WaitlistNode(user, tier);
+    // Now accepts numSeats
+    enqueue(user, tier, numSeats) {
+        const newNode = new WaitlistNode(user, tier, numSeats);
         this.heap.push(newNode);
         this.heapifyUp();
     }
@@ -57,7 +56,6 @@ class WaitlistHeap {
     dequeue() {
         if (this.heap.length === 0) return null;
         if (this.heap.length === 1) return this.heap.pop();
-
         const item = this.heap[0];
         this.heap[0] = this.heap.pop();
         this.heapifyDown();
@@ -79,19 +77,13 @@ class WaitlistHeap {
             if (this.hasRightChild(index) && this.isHigherPriority(this.getRightChildIndex(index), smallerChildIndex)) {
                 smallerChildIndex = this.getRightChildIndex(index);
             }
-
-            if (this.isHigherPriority(index, smallerChildIndex)) {
-                break;
-            } else {
-                this.swap(index, smallerChildIndex);
-            }
+            if (this.isHigherPriority(index, smallerChildIndex)) break;
+            else this.swap(index, smallerChildIndex);
             index = smallerChildIndex;
         }
     }
 
-    isEmpty() {
-        return this.heap.length === 0;
-    }
+    isEmpty() { return this.heap.length === 0; }
 }
 
 module.exports = WaitlistHeap;

@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react';
 
 function App() {
-  // --- ROUTING & VIEW STATE ---
-  // We start at 'login' now.
+  // --- STATE ---
   const [currentView, setCurrentView] = useState('login'); 
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [currentSlide, setCurrentSlide] = useState(0);
 
-  // --- USER STATE ---
+  // User State
   const [globalUser, setGlobalUser] = useState('');
 
   // Trie Search State
@@ -17,7 +16,13 @@ function App() {
 
   // Segment Tree / Booking State
   const [seats, setSeats] = useState(Array(50).fill('available'));
-  const [numSeats, setNumSeats] = useState(1);
+  
+  // NEW: Manual Selection State
+  const [selectedSeats, setSelectedSeats] = useState([]);
+  // Mode toggle: Auto (Contiguous) vs Manual (Click)
+  const [bookingMode, setBookingMode] = useState('auto'); 
+  const [numSeatsAuto, setNumSeatsAuto] = useState(1);
+
   const [waitlistCount, setWaitlistCount] = useState(0);
   
   // Admin State
@@ -26,42 +31,37 @@ function App() {
   const [logs, setLogs] = useState([]);
 
   // --- MOCK DATA ---
- const heroBanners = [
+  const heroBanners = [
     "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?auto=format&fit=crop&w=1600&q=80",
-    "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?auto=format&fit=crop&w=1600&q=80",
-    "https://images.unsplash.com/photo-1440404653325-ab127d49abc1?auto=format&fit=crop&w=1600&q=80"
+    "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?auto=format&fit=crop&w=1600&q=80"
   ];
 
   const movies = [
-    // 📸 CHANGE THE IMAGE STRING BELOW TO "/your-photo-name.jpg" AFTER PUTTING IT IN THE PUBLIC FOLDER
-    { id: 1, title: "Acoustic Night", type: "Concert", rating: "9.2/10", votes: "45.2K", formats: "Live", lang: "English, Hindi", image: "./public/my-photo.jpg" },
+    { id: 1, title: "Acoustic Night", type: "Concert", rating: "9.2/10", votes: "45.2K", formats: "Live", lang: "English, Hindi", image: "/my-photo.jpg" }, // 📸 Ensure my-photo.jpg is in the 'public' folder!
     { id: 2, title: "Action Sports Expo", type: "Sports", rating: "8.8/10", votes: "12.1K", formats: "Stadium", lang: "English", image: "https://images.unsplash.com/photo-1541534741688-6078c6bfb5c5?w=500&q=80" },
     { id: 3, title: "Art Gallery Opening", type: "Exhibition", rating: "7.5/10", votes: "3.4K", formats: "Gallery", lang: "Silent", image: "https://images.unsplash.com/photo-1536924940846-227afb31e2a5?w=500&q=80" },
     { id: 4, title: "Jazz Festival", type: "Music", rating: "9.5/10", votes: "89.3K", formats: "Park VIP", lang: "Instrumental", image: "https://images.unsplash.com/photo-1511192336575-5a79af67a629?w=500&q=80" }
   ];
 
-  // --- BROWSER BACK BUTTON FIX (HISTORY API) ---
+  // --- ROUTING / HISTORY ---
   useEffect(() => {
     const handlePopState = (e) => {
-      if (e.state && e.state.view) {
-        setCurrentView(e.state.view);
-      } else {
-        // Default fallback if history is weird
-        setCurrentView(globalUser ? 'home' : 'login'); 
-      }
+      if (e.state && e.state.view) setCurrentView(e.state.view);
+      else setCurrentView(globalUser ? 'home' : 'login'); 
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, [globalUser]);
 
-  // Safe Navigation Function
   const navigateTo = (view, eventData = null) => {
     window.history.pushState({ view: view }, '', `#${view}`);
     setCurrentView(view);
-    if (eventData) setSelectedEvent(eventData);
+    if (eventData) {
+        setSelectedEvent(eventData);
+        setSelectedSeats([]); // Clear selections on new page
+    }
   };
 
-  // Carousel Logic
   useEffect(() => {
     if (currentView === 'home') {
       const timer = setInterval(() => setCurrentSlide(p => (p + 1) % heroBanners.length), 4000);
@@ -76,9 +76,7 @@ function App() {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    if (globalUser.trim().length > 0) {
-      navigateTo('home');
-    }
+    if (globalUser.trim().length > 0) navigateTo('home');
   };
 
   const handleSearch = async (e) => {
@@ -92,36 +90,80 @@ function App() {
       } catch (error) {
         console.error("Search failed:", error);
       }
-    } else {
-      setResults([]);
-    }
+    } else setResults([]);
+  };
+
+  // NEW: Seat Click Handler
+  const toggleSeatSelection = (index) => {
+    if (bookingMode !== 'manual') return; // Only allow clicks in manual mode
+    if (seats[index] !== 'available' && seats[index] !== 'selected') return; // Don't click booked seats
+
+    setSeats(prev => {
+        const newSeats = [...prev];
+        if (newSeats[index] === 'available') {
+            newSeats[index] = 'selected';
+            setSelectedSeats([...selectedSeats, index]);
+        } else if (newSeats[index] === 'selected') {
+            newSeats[index] = 'available';
+            setSelectedSeats(selectedSeats.filter(s => s !== index));
+        }
+        return newSeats;
+    });
   };
 
   const handleBook = async (e) => {
     e.preventDefault();
-    addLog(`O(log N) Segment Tree query for ${numSeats} contiguous seats...`);
+    
+    // Auto Mode (Contiguous via Segment Tree)
+    if (bookingMode === 'auto') {
+        addLog(`O(log N) Segment Tree query for ${numSeatsAuto} contiguous seats...`);
+        try {
+          const response = await fetch('http://localhost:5000/api/events/book', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ eventId: selectedEvent.id, userName: globalUser, numSeats: parseInt(numSeatsAuto), tier: 1 })
+          });
+          const data = await response.json();
 
-    try {
-      const response = await fetch('http://localhost:5000/api/events/book', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ eventId: selectedEvent.id, userName: globalUser, numSeats: parseInt(numSeats), tier: 1 })
-      });
-      const data = await response.json();
+          if (data.status === 'success') {
+            addLog(`SUCCESS: Seats ${data.seats.start} to ${data.seats.end} allocated`, 'success');
+            setSeats(prev => {
+              const newSeats = [...prev];
+              for (let i = data.seats.start; i <= data.seats.end; i++) newSeats[i] = 'booked';
+              return newSeats;
+            });
+          } else if (data.status === 'waitlisted') {
+            addLog(`Row Full. Pushed ${globalUser} to Min-Heap Priority Waitlist.`, 'warning');
+            setWaitlistCount(data.waitlist_size);
+          }
+        } catch (error) {
+          addLog("Server error during booking.", 'error');
+        }
+    } 
+    // Manual Mode (Specific IDs)
+    else {
+        if (selectedSeats.length === 0) return alert("Please select seats on the grid first.");
+        addLog(`Processing manual booking for seats: ${selectedSeats.join(', ')}...`);
+        try {
+          const response = await fetch('http://localhost:5000/api/events/book-specific', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userName: globalUser, seatIndices: selectedSeats })
+          });
+          const data = await response.json();
 
-      if (data.status === 'success') {
-        addLog(`SUCCESS: Seats ${data.seats.start} to ${data.seats.end} allocated`, 'success');
-        setSeats(prev => {
-          const newSeats = [...prev];
-          for (let i = data.seats.start; i <= data.seats.end; i++) newSeats[i] = 'booked';
-          return newSeats;
-        });
-      } else if (data.status === 'waitlisted') {
-        addLog(`Row Full. Pushed ${globalUser} to Min-Heap Priority Waitlist.`, 'warning');
-        setWaitlistCount(data.waitlist_size);
-      }
-    } catch (error) {
-      addLog("Server error during booking.", 'error');
+          if (data.status === 'success') {
+            addLog(`SUCCESS: Manual seats locked.`, 'success');
+            setSeats(prev => {
+              const newSeats = [...prev];
+              selectedSeats.forEach(idx => newSeats[idx] = 'booked');
+              return newSeats;
+            });
+            setSelectedSeats([]); // Clear selection array
+          }
+        } catch (error) {
+          addLog("Server error during manual booking.", 'error');
+        }
     }
   };
 
@@ -155,17 +197,23 @@ function App() {
 
   const handleSystemReset = async () => {
     try {
-      addLog("Triggering global DSA memory wipe...");
       const response = await fetch('http://localhost:5000/api/events/reset', { method: 'POST' });
       const data = await response.json();
       if (data.status === 'success') {
         setSeats(Array(50).fill('available'));
+        setSelectedSeats([]);
         setWaitlistCount(0);
         addLog("SYSTEM RESET SUCCESSFUL. Memory clean.", 'success');
       }
     } catch (error) {
       addLog("Failed to reset backend memory.", 'error');
     }
+  };
+
+  // NEW: Download TXT Report
+  const handleDownloadReport = () => {
+      addLog("Generating Admin System Report (.txt)...");
+      window.open('http://localhost:5000/api/events/export', '_blank');
   };
 
   // --- RENDER ---
@@ -175,7 +223,6 @@ function App() {
       {/* --- LOGIN VIEW --- */}
       {currentView === 'login' && (
         <div className="min-h-screen flex items-center justify-center bg-gray-900 relative overflow-hidden">
-          {/* Background decoration */}
           <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full bg-rose-600/20 blur-[120px]"></div>
           <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] rounded-full bg-blue-600/20 blur-[120px]"></div>
           
@@ -186,32 +233,21 @@ function App() {
             <form onSubmit={handleLogin} className="space-y-6">
               <div className="text-left">
                 <label className="text-gray-300 text-xs uppercase font-bold tracking-wider mb-2 block">Enter Your Name to Begin</label>
-                <input 
-                  required 
-                  type="text" 
-                  value={globalUser} 
-                  onChange={(e) => setGlobalUser(e.target.value)} 
-                  placeholder="e.g. Dnyanesh" 
-                  className="w-full px-5 py-4 bg-gray-900/50 border border-gray-700 text-white rounded-xl focus:outline-none focus:border-rose-500 transition-colors shadow-inner"
-                />
+                <input required type="text" value={globalUser} onChange={(e) => setGlobalUser(e.target.value)} placeholder="e.g. Yugant" className="w-full px-5 py-4 bg-gray-900/50 border border-gray-700 text-white rounded-xl focus:outline-none focus:border-rose-500 transition-colors shadow-inner" />
               </div>
-              <button type="submit" className="w-full bg-rose-600 hover:bg-rose-500 text-white font-bold py-4 rounded-xl transition-all shadow-[0_0_20px_rgba(225,29,72,0.4)] hover:shadow-[0_0_30px_rgba(225,29,72,0.6)]">
-                Initialize Session
-              </button>
+              <button type="submit" className="w-full bg-rose-600 hover:bg-rose-500 text-white font-bold py-4 rounded-xl transition-all shadow-[0_0_20px_rgba(225,29,72,0.4)]">Initialize Session</button>
             </form>
           </div>
         </div>
       )}
 
-      {/* --- MAIN APP WRAPPER (Shown only if not login) --- */}
+      {/* --- MAIN APP WRAPPER --- */}
       {currentView !== 'login' && (
         <div className="pb-20">
           {/* PRIMARY NAVBAR */}
           <nav className="bg-white px-8 py-3 shadow-sm flex justify-between items-center relative z-50">
             <div className="flex items-center gap-8 w-2/3">
-              <div onClick={() => navigateTo('home')} className="text-3xl font-black tracking-tighter cursor-pointer text-rose-600">
-                SmartSeat<span className="text-gray-900">.</span>
-              </div>
+              <div onClick={() => navigateTo('home')} className="text-3xl font-black tracking-tighter cursor-pointer text-rose-600">SmartSeat<span className="text-gray-900">.</span></div>
               
               <div className="relative w-full max-w-2xl">
                 <div className="flex items-center bg-gray-50 border border-gray-200 rounded-md px-4 py-2 focus-within:bg-white focus-within:border-rose-400 transition-all">
@@ -239,7 +275,6 @@ function App() {
           <nav className="bg-gray-900 text-gray-300 text-sm py-2 px-8 shadow-md">
             <ul className="flex gap-6 font-medium">
               <li onClick={() => navigateTo('home')} className="hover:text-white cursor-pointer">Events</li>
-              <li className="hover:text-white cursor-pointer">Sports</li>
             </ul>
           </nav>
 
@@ -260,6 +295,7 @@ function App() {
                   {movies.map(movie => (
                     <div key={movie.id} onClick={() => navigateTo('booking', movie)} className="group cursor-pointer">
                       <div className="relative rounded-xl overflow-hidden shadow-lg mb-3">
+                        {/* Note: This uses the image string directly, whether URL or local file */}
                         <img src={movie.image} alt={movie.title} className="w-full h-[400px] object-cover group-hover:scale-105 transition-transform duration-500" />
                         <div className="absolute bottom-0 w-full bg-black/80 text-white p-2 text-sm font-bold flex items-center gap-2">
                           <span className="text-rose-500">⭐</span> {movie.rating}
@@ -277,21 +313,15 @@ function App() {
           {/* --- BOOKING VIEW --- */}
           {currentView === 'booking' && selectedEvent && (
             <div className="animate-fade-in">
-              {/* Cinematic Header with UI Back Button */}
               <div className="w-full h-[350px] relative overflow-hidden bg-black shadow-2xl mb-10 flex items-center">
                  <img src={selectedEvent.image} className="absolute inset-0 w-full h-full object-cover opacity-30 blur-sm scale-110" alt="Backdrop" />
                  <div className="absolute inset-0 bg-gradient-to-r from-black via-black/80 to-transparent"></div>
-                 
                  <div className="relative z-10 max-w-7xl mx-auto px-8 w-full flex gap-8 items-start">
-                   {/* Dedicated UI Back Button */}
-                   <button onClick={() => navigateTo('home')} className="mt-2 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg backdrop-blur-md flex items-center gap-2 transition-all">
-                     ← Back
-                   </button>
-                   
+                   <button onClick={() => navigateTo('home')} className="mt-2 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg backdrop-blur-md flex items-center gap-2 transition-all">← Back</button>
                    <img src={selectedEvent.image} className="w-56 h-72 object-cover rounded-xl shadow-2xl border border-gray-700" alt="Poster" />
                    <div className="text-white mt-4">
                      <h1 className="text-5xl font-black mb-4">{selectedEvent.title}</h1>
-                     <p className="text-gray-300 mb-6 max-w-lg">Advanced DSA-powered booking engine. Securing contiguous seats instantly.</p>
+                     <p className="text-gray-300 mb-6 max-w-lg">Advanced DSA-powered booking engine.</p>
                    </div>
                  </div>
               </div>
@@ -301,12 +331,30 @@ function App() {
                 {/* LEFT: Consumer Booking Tools */}
                 <div className="lg:col-span-4 space-y-6">
                   <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100">
-                    <h3 className="text-xl font-bold mb-6 text-gray-800 border-b pb-4">Booking: {globalUser}</h3>
+                    <h3 className="text-xl font-bold mb-6 text-gray-800 border-b pb-4">Booking: <span className="text-rose-500">{globalUser}</span></h3>
+                    
+                    {/* Mode Toggle */}
+                    <div className="flex gap-2 mb-6 bg-gray-100 p-1 rounded-lg">
+                        <button onClick={() => setBookingMode('auto')} className={`w-1/2 py-2 rounded-md text-sm font-bold transition-all ${bookingMode === 'auto' ? 'bg-white text-rose-600 shadow-sm' : 'text-gray-500'}`}>Auto (Contiguous)</button>
+                        <button onClick={() => setBookingMode('manual')} className={`w-1/2 py-2 rounded-md text-sm font-bold transition-all ${bookingMode === 'manual' ? 'bg-white text-rose-600 shadow-sm' : 'text-gray-500'}`}>Manual (Select)</button>
+                    </div>
+
                     <form onSubmit={handleBook} className="space-y-5">
-                      <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Quantity (Contiguous)</label>
-                        <input required type="number" min="1" max="50" value={numSeats} onChange={(e) => setNumSeats(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-rose-400 focus:bg-white transition-colors" />
-                      </div>
+                      {bookingMode === 'auto' ? (
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Quantity</label>
+                            <input required type="number" min="1" max="50" value={numSeatsAuto} onChange={(e) => setNumSeatsAuto(e.target.value)} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg outline-none focus:border-rose-400" />
+                            <p className="text-xs text-gray-400 mt-2">Segment Tree allocates next available contiguous block.</p>
+                        </div>
+                      ) : (
+                        <div>
+                            <div className="p-4 bg-blue-50 border border-blue-100 rounded-lg text-blue-800 text-sm mb-2 text-center font-semibold">
+                                {selectedSeats.length} Seats Selected
+                            </div>
+                            <p className="text-xs text-gray-400 text-center">Click seats on the grid to select.</p>
+                        </div>
+                      )}
+                      
                       <button type="submit" className="w-full bg-rose-500 hover:bg-rose-600 text-white font-bold py-4 rounded-lg transition-colors shadow-lg shadow-rose-500/30">
                         Process Booking
                       </button>
@@ -315,17 +363,12 @@ function App() {
 
                   {/* Min-Heap Status */}
                   <div className="bg-gradient-to-br from-yellow-50 to-orange-50 p-6 rounded-2xl border border-yellow-200 flex items-center justify-between">
-                    <div>
-                      <h2 className="font-bold text-yellow-800 text-lg">Waitlist Queue</h2>
-                      <p className="text-xs text-yellow-600 font-medium">Min-Heap Managed</p>
-                    </div>
-                    <div className="text-4xl font-black text-yellow-600 bg-white w-16 h-16 rounded-full flex items-center justify-center shadow-inner">
-                      {waitlistCount}
-                    </div>
+                    <div><h2 className="font-bold text-yellow-800 text-lg">Waitlist Queue</h2><p className="text-xs text-yellow-600 font-medium">Min-Heap Managed</p></div>
+                    <div className="text-4xl font-black text-yellow-600 bg-white w-16 h-16 rounded-full flex items-center justify-center shadow-inner">{waitlistCount}</div>
                   </div>
                 </div>
 
-                {/* RIGHT: Seat Matrix & DSA Dashboard */}
+                {/* RIGHT: Seat Matrix & Admin Dashboard */}
                 <div className="lg:col-span-8 space-y-6">
                   
                   {/* Theater View */}
@@ -335,12 +378,42 @@ function App() {
                       <span className="text-xs text-gray-400 font-bold tracking-[0.3em] uppercase absolute -bottom-6 left-1/2 transform -translate-x-1/2">Screen</span>
                     </div>
                     
+                    {/* The Grid */}
                     <div className="grid grid-cols-10 gap-3 mb-10 max-w-2xl mx-auto">
                       {seats.map((status, index) => (
-                        <div key={index} className={`aspect-square rounded-t-lg rounded-b-sm flex items-center justify-center text-[10px] font-bold transition-all ${status === 'available' ? 'bg-white border-2 border-green-400 text-green-600' : status === 'resolved' ? 'bg-gradient-to-b from-yellow-300 to-yellow-500 text-white scale-105' : 'bg-gray-300 text-gray-500 shadow-inner'}`}>
+                        <div 
+                          key={index} 
+                          onClick={() => toggleSeatSelection(index)}
+                          className={`aspect-square rounded-t-lg rounded-b-sm flex items-center justify-center text-[10px] font-bold transition-all ${
+                            status === 'available' ? (bookingMode === 'manual' ? 'bg-white border-2 border-green-400 text-green-600 cursor-pointer hover:bg-green-50' : 'bg-white border-2 border-green-400 text-green-600')
+                            : status === 'selected' ? 'bg-rose-500 text-white shadow-md scale-110 cursor-pointer'
+                            : status === 'resolved' ? 'bg-gradient-to-b from-yellow-300 to-yellow-500 text-white scale-105' 
+                            : 'bg-gray-300 text-gray-500 shadow-inner'
+                          }`}
+                        >
                           {index}
                         </div>
                       ))}
+                    </div>
+
+                    {/* NEW DETAILED LEGEND */}
+                    <div className="flex flex-wrap gap-x-8 gap-y-4 justify-center text-xs font-bold text-gray-600 uppercase tracking-wider bg-gray-50 py-4 px-6 rounded-xl border border-gray-200">
+                      <div className="flex items-center gap-2" title="Empty seat, ready to book">
+                        <div className="w-4 h-4 border-2 border-green-400 bg-white rounded-t"></div> 
+                        <span className="text-green-600">Available</span>
+                      </div>
+                      <div className="flex items-center gap-2" title="Seat is currently occupied">
+                        <div className="w-4 h-4 bg-gray-300 rounded-t shadow-inner"></div> 
+                        <span>Booked (Unavailable)</span>
+                      </div>
+                      <div className="flex items-center gap-2" title="Your current manual selection">
+                        <div className="w-4 h-4 bg-rose-500 rounded-t shadow-sm"></div> 
+                        <span className="text-rose-600">Your Selection</span>
+                      </div>
+                      <div className="flex items-center gap-2" title="Assigned automatically by Min-Heap upon cancellation">
+                        <div className="w-4 h-4 bg-yellow-400 rounded-t shadow-md"></div> 
+                        <span className="text-yellow-600">Auto-Resolved (Heap)</span>
+                      </div>
                     </div>
                   </div>
 
@@ -358,21 +431,24 @@ function App() {
                       ))}
                     </div>
 
-                    <div className="md:col-span-1 space-y-4">
-                      {/* Original Delete Function */}
-                      <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700/50">
-                        <h3 className="font-bold text-red-400 text-xs mb-3 uppercase tracking-wider">Free Seat Range</h3>
-                        <form onSubmit={handleCancel} className="space-y-3">
+                    <div className="md:col-span-1 space-y-3">
+                      <div className="bg-gray-800/50 p-3 rounded-xl border border-gray-700/50">
+                        <h3 className="font-bold text-red-400 text-[10px] mb-2 uppercase tracking-wider">Free Seat Range</h3>
+                        <form onSubmit={handleCancel} className="space-y-2">
                           <div className="flex gap-2">
-                            <input required type="number" min="0" max="49" value={cancelStart} onChange={(e) => setCancelStart(e.target.value)} placeholder="Start" className="w-1/2 px-2 py-1 bg-black border border-gray-700 rounded text-white text-xs outline-none focus:border-red-500" />
-                            <input required type="number" min="0" max="49" value={cancelEnd} onChange={(e) => setCancelEnd(e.target.value)} placeholder="End" className="w-1/2 px-2 py-1 bg-black border border-gray-700 rounded text-white text-xs outline-none focus:border-red-500" />
+                            <input required type="number" min="0" max="49" value={cancelStart} onChange={(e) => setCancelStart(e.target.value)} placeholder="Start" className="w-1/2 px-2 py-1 bg-black border border-gray-700 rounded text-white text-[10px] outline-none focus:border-red-500" />
+                            <input required type="number" min="0" max="49" value={cancelEnd} onChange={(e) => setCancelEnd(e.target.value)} placeholder="End" className="w-1/2 px-2 py-1 bg-black border border-gray-700 rounded text-white text-[10px] outline-none focus:border-red-500" />
                           </div>
-                          <button type="submit" className="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/50 font-bold py-1.5 rounded text-xs transition-colors">EXECUTE</button>
+                          <button type="submit" className="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/50 font-bold py-1.5 rounded text-[10px] transition-colors">EXECUTE</button>
                         </form>
                       </div>
 
-                      {/* NEW SYSTEM RESET BUTTON */}
-                      <button onClick={handleSystemReset} className="w-full bg-purple-900/40 hover:bg-purple-900/60 text-purple-300 border border-purple-700/50 font-bold py-3 rounded-xl text-xs transition-all tracking-widest uppercase flex items-center justify-center gap-2">
+                      {/* NEW REPORT BUTTON */}
+                      <button onClick={handleDownloadReport} className="w-full bg-blue-900/40 hover:bg-blue-900/60 text-blue-300 border border-blue-700/50 font-bold py-2 rounded-lg text-[10px] transition-all tracking-widest uppercase">
+                        📥 Download TXT Report
+                      </button>
+
+                      <button onClick={handleSystemReset} className="w-full bg-purple-900/40 hover:bg-purple-900/60 text-purple-300 border border-purple-700/50 font-bold py-2 rounded-lg text-[10px] transition-all tracking-widest uppercase">
                         ⚠️ Hard Reset Engine
                       </button>
                     </div>
